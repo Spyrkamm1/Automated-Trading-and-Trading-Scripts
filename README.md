@@ -109,7 +109,7 @@ I am constantly looking for ways to improve this project, and there are several 
 
 If you find this project useful, please consider sponsoring its continued development. Your support helps in adding more features, improving stability, and providing updates for various platforms.
 
-[Sponsor this project](https://github.com/sponsors/your-username)
+[Sponsor this project](https://github.com/sponsors/spyrkamm1)
 
 ## 📜 License
 
@@ -124,7 +124,7 @@ Contributions are welcome! If you want to contribute, please open an issue or su
 If you have any questions or suggestions, feel free to reach out:
 
 - GitHub Issues: [Report Issues](https://github.com/your-username/trading-bot/issues)
-- Email: your-email@example.com
+- Email: matthewspyrka@gmail.com
 
 ---
 
