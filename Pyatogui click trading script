@@ -1,0 +1,180 @@
+import os
+import logging
+from flask import Flask, request, jsonify
+import time
+import subprocess
+import pyautogui
+
+app = Flask(__name__)
+
+current_position = None
+click_in_progress = False  # Flag to prevent multiple clicks
+
+# Define screen coordinates for actions
+coordinates = {
+    'close_long_position': (876, 330),
+    'close_short_position': (876, 330),
+    'buy_order': (555, 330),
+    'sell_order': (650, 330),
+    'resting_position': (876, 330)  # Resting position after order completion
+}
+
+def click(x, y):
+    """Function to perform a single mouse click at given coordinates using pyautogui."""
+    app.logger.info(f'Attempting to click at coordinates: ({x}, {y})')
+    pyautogui.moveTo(x, y)
+    pyautogui.click(clicks=1)  # Ensuring single click
+    app.logger.info(f'Clicked at coordinates: ({x}, {y})')
+    pyautogui.PAUSE = 0.1  # Adding a short pause between actions
+
+def move_to_resting_position():
+    """Function to move the mouse to the resting position after completing an order."""
+    app.logger.info('Moving mouse to resting position.')
+    pyautogui.moveTo(*coordinates['resting_position'])
+
+def close_current_position():
+    """Function to close the current position."""
+    global current_position
+
+    if current_position:
+        close_action = 'close_short_position' if current_position['side'] == 'SELL' else 'close_long_position'
+        app.logger.info(f'Closing current position: {current_position}')
+        click(*coordinates[close_action])
+        time.sleep(1.5)  # Wait for closing action to complete
+        current_position = None  # Reset the current position
+        app.logger.info('Position closed successfully.')
+    else:
+        app.logger.info('No position to close.')
+
+def place_order(action):
+    """Function to place a new buy or sell order."""
+    global current_position, click_in_progress
+
+    if click_in_progress:
+        app.logger.info(f'Order already in progress: {action} ignored.')
+        return False
+
+    try:
+        click_in_progress = True  # Block further clicks
+
+        # Place new order
+        app.logger.info(f'Clicking {action} order button')
+        click(*coordinates[f'{action}_order'])
+        app.logger.info(f'{action.capitalize()} order placed.')
+
+        # Update the current position
+        current_position = {
+            'side': action.upper(),
+            'quantity': 0.05,
+            'symbol': 'SPX'
+        }
+        app.logger.info(f'Current position updated: {current_position}')
+
+        # Move mouse to the resting position
+        move_to_resting_position()
+
+        return True
+
+    except Exception as e:
+        app.logger.error(f'Error placing order: {str(e)}')
+        return False
+
+    finally:
+        click_in_progress = False  # Reset the click_in_progress flag
+
+def execute_trade(action):
+    """Function to execute a trade based on action ('buy' or 'sell')."""
+    global current_position
+
+    # Check if the action is the same as the current position
+    if current_position and current_position['side'] == action.upper():
+        app.logger.info(f'Ignoring {action} action as we are already on the {current_position["side"].lower()} side.')
+        return False  # Ignore the action if it's on the current side
+
+    # Close current position if needed
+    close_current_position()
+
+    # Allow time after closing the position before placing a new order
+    time.sleep(1)  # Additional wait time before the next action
+
+    # Place the new order
+    return place_order(action)
+
+@app.route('/')
+def index():
+    return "Welcome to the trading bot webhook service."
+
+@app.route('/webhook', methods=['POST', 'OPTIONS', 'HEAD', 'GET'])
+def webhook():
+    global current_position
+
+    if request.method == 'OPTIONS':
+        # Handle preflight request for CORS or allow methods
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS, HEAD, GET')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response
+
+    if request.method == 'HEAD':
+        # Respond to HEAD requests (no body)
+        response = jsonify()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response
+
+    if request.method == 'GET':
+        # Respond to GET requests
+        return jsonify({'status': 'GET request received'})
+
+    # Handle POST requests
+    content_type = request.headers.get('Content-Type', '').lower()
+    data = request.get_data(as_text=True)
+
+    app.logger.info(f'Received request with Content-Type: {content_type}')
+    app.logger.debug(f'Request data: {data}')
+
+    try:
+        if content_type.startswith('application/json'):
+            data = request.json
+            if not isinstance(data, dict) or 'action' not in data:
+                raise ValueError('Invalid JSON data or missing action field')
+        elif content_type.startswith('text/plain'):
+            if not data.strip():
+                raise ValueError('Empty text/plain content')
+            data = {'action': data.strip().lower()}  # Ensure the action is in lower case
+        else:
+            raise ValueError('Unsupported Content-Type')
+
+        action = data['action'].lower()
+        if action not in ['buy', 'sell']:
+            raise ValueError(f'Invalid action received: {action}')
+
+        app.logger.info(f'Received action: {action}, current position: {current_position}')
+
+        success = execute_trade(action)
+        if success:
+            return jsonify({'status': f'{action} order placed'}), 200
+        else:
+            return jsonify({'status': f'{action} order ignored (already on current side)'}), 200  # Inform about the ignored action
+
+    except ValueError as e:
+        app.logger.error(f'Error in request: {str(e)}')
+        return jsonify({'error': str(e)}), 400
+
+    except Exception as e:
+        app.logger.error(f'Unexpected error: {str(e)}')
+        restart_app()
+        return jsonify({'error': 'Unexpected error occurred. Restarting app.'}), 500
+
+def restart_app():
+    """Restart the application using gunicorn."""
+    try:
+        app.logger.info('Restarting application...')
+        subprocess.call(['pkill', '-f', 'gunicorn'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.Popen(['gunicorn', '-w', '1', '-k', 'gevent', '-b', '0.0.0.0:80', 'app:app'])
+    except Exception as e:
+        app.logger.error(f'Failed to restart application: {str(e)}')
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)  # Set up logging
+    app.run(host='0.0.0.0', port=3000)
