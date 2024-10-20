@@ -1,0 +1,118 @@
+//@version=5
+indicator("Advanced Chaos Theory Squeeze Momentum Oscillator with ATR-based Wait Signal (Improved Wait Logic)", overlay=false, shorttitle="ACTSMO with ATR Wait Signal")
+
+// Inputs
+bbLength = input.int(20, title="Bollinger Bands Length")
+bbMultiplier = input.float(2.0, title="Bollinger Bands Multiplier")
+kcLength = input.int(20, title="Keltner Channels Length")
+kcMultiplier = input.float(1.5, title="Keltner Channels Multiplier")
+momentumLength = input.int(12, title="Momentum Length")
+squeezePeriod = input.int(20, title="Squeeze Period")
+atrMultiplier = input.float(400.0, title="ATR Multiplier")  // Increased multiplier to reduce noise
+atrPeriod = input.int(100, title="ATR Period")
+dsFactor = input.float(0.1, title="Dynamical System Factor")
+smoothingLength = input.int(14, title="Smoothing Length")
+rsiLength = input.int(14, title="RSI Length")
+rsiThreshold = input.float(50, title="RSI Threshold")
+pipSensitivity = input.float(0.01, title="Pip Sensitivity")
+minPipChange = input.float(0.05, title="Minimum Pip Change for Momentum Shift")
+bbWidthThreshold = input.float(0.005, title="Bollinger Band Width Threshold for Wait Signal")
+
+// Bollinger Bands
+bbBasis = ta.sma(close, bbLength)
+bbDev = bbMultiplier * ta.stdev(close, bbLength)
+upperBB = bbBasis + bbDev
+lowerBB = bbBasis - bbDev
+
+// Keltner Channels
+atr = ta.atr(atrPeriod)
+kcBasis = ta.sma(close, kcLength)
+upperKC = kcBasis + kcMultiplier * atr
+lowerKC = kcBasis - kcMultiplier * atr
+
+// Squeeze Calculation
+squeezeOn = upperBB < upperKC and lowerBB > lowerKC
+squeezeOff = upperBB > upperKC and lowerBB < lowerKC
+
+// Dynamical System Calculation
+var float dynSystem = na
+dynSystem := na(dynSystem[1]) ? close : dynSystem[1] + dsFactor * (close - dynSystem[1])
+
+// Momentum Calculation with pip sensitivity
+momentum = close - close[momentumLength] + dynSystem
+if math.abs(close - close[momentumLength]) >= minPipChange
+    momentum := close - close[momentumLength] + dynSystem
+
+squeezeMomentum = ta.sma(momentum, squeezePeriod)
+
+// Apply Smoothing to Momentum
+smoothedMomentum = ta.sma(squeezeMomentum, smoothingLength)
+
+// RSI for Signal Confirmation
+rsiValue = ta.rsi(close, rsiLength)
+
+// Adjust ATR Multiplier based on Smoothing
+smoothedATR = ta.sma(atr, smoothingLength)  // Smoothing the ATR
+adaptiveATRMultiplier = atrMultiplier  // Keeping it simpler with just ATR Multiplier
+
+// ATR Trailing Stop Calculation
+atrVal = smoothedATR  // Using smoothed ATR
+adjustedStopLoss = adaptiveATRMultiplier * atrVal * pipSensitivity  // Adjust stop loss dynamically
+
+// Use the closing price as the reference for trailing stop calculations
+hsrc = close
+
+// Trailing Stop Calculation
+var float ATRTrailingStop = na  // Initialize ATRTrailingStop as na
+val_1 = hsrc > nz(ATRTrailingStop[1], 0) ? hsrc - adjustedStopLoss : hsrc + adjustedStopLoss
+val_2 = hsrc < nz(ATRTrailingStop[1], 0) and hsrc[1] < nz(ATRTrailingStop[1], 0) ? math.min(nz(ATRTrailingStop[1]), hsrc + adjustedStopLoss) : val_1
+ATRTrailingStop := hsrc > nz(ATRTrailingStop[1], 0) and hsrc[1] > nz(ATRTrailingStop[1], 0) ? math.max(nz(ATRTrailingStop[1]), hsrc - adjustedStopLoss) : val_2
+
+// Simplified Buy and Sell Conditions
+buy = ta.crossover(hsrc, ATRTrailingStop)
+sell = ta.crossunder(hsrc, ATRTrailingStop)
+
+// Bollinger Band Width Calculation
+bbWidth = (upperBB - lowerBB) / bbBasis
+
+// Wait Condition: Narrow Bollinger Bands and Low ATR
+waitCondition = bbWidth < bbWidthThreshold and smoothedATR < ta.ema(smoothedATR, atrPeriod)
+
+// Variables to Track the Start and End of a Wait Period
+var bool inWait = false
+waitStartSignal = false
+waitEndSignal = false
+
+// Check if waitCondition is true and inWait is false to signal start of wait
+if waitCondition and not inWait
+    inWait := true
+    waitStartSignal := true
+
+// Check if waitCondition is false and inWait is true to signal end of wait
+if not waitCondition and inWait
+    inWait := false
+    waitEndSignal := true
+
+// Plotting Oscillator, ATR, and Performance Metrics
+plot(smoothedMomentum, color=color.blue, title="Smoothed Squeeze Momentum")
+plot(smoothedATR, color=color.purple, title="Smoothed ATR")
+hline(0, "Zero Line", color=color.gray)
+bgcolor(squeezeOn ? color.new(color.red, 90) : na, title="Squeeze Background On")
+bgcolor(squeezeOff ? color.new(color.green, 90) : na, title="Squeeze Background Off")
+
+// Buy and Sell Signals
+plotshape(series=buy, title="Buy Signal", location=location.belowbar, color=color.green, style=shape.labelup, text="BUY")
+plotshape(series=sell, title="Sell Signal", location=location.abovebar, color=color.red, style=shape.labeldown, text="SELL")
+
+// Plot Wait Start and End Signals
+plotshape(series=waitStartSignal, title="Wait Start Signal", location=location.belowbar, color=color.orange, style=shape.labelup, text="WAIT START")
+plotshape(series=waitEndSignal, title="Wait End Signal", location=location.abovebar, color=color.orange, style=shape.labeldown, text="WAIT END")
+
+// Alerts based on pip sensitivity and wait start/end
+alertcondition(buy, title="Buy Signal", message="Buy Signal detected")
+alertcondition(sell, title="Sell Signal", message="Sell Signal detected")
+alertcondition(waitStartSignal, title="Wait Start Signal", message="Wait Start Signal detected")
+alertcondition(waitEndSignal, title="Wait End Signal", message="Wait End Signal detected")
+
+// Display Performance Metrics
+label.new(bar_index, high, "RSI: " + str.tostring(rsiValue) + "\nATR: " + str.tostring(smoothedATR), style=label.style_label_left, color=color.blue, textcolor=color.white)
