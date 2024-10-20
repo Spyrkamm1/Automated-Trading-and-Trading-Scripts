@@ -1,8 +1,7 @@
 //@version=5
 indicator("Advanced Chaos Theory Squeeze Momentum Oscillator with ATR-based Wait Signal (Improved Wait Logic)", overlay=false, shorttitle="ACTSMO with ATR Wait Signal")
 
-//Creator
-Matthew Spyrka
+//Creator Matthew Spyrka
 
 // Inputs
 bbLength = input.int(20, title="Bollinger Bands Length")
